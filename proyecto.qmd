@@ -1061,7 +1061,7 @@ df_predicciones = pd.concat([df_lr_pred, df_dt_pred], ignore_index=True)
 
 
 ```{python}
-
+# Crear DataFrames para visualización
 df_lr_pred = pd.DataFrame({
     'Real': y_test.values,
     'Predicción': y_pred_lr_test,
@@ -1078,43 +1078,44 @@ df_dt_pred = pd.DataFrame({
 
 df_predicciones = pd.concat([df_lr_pred, df_dt_pred], ignore_index=True)
 
+# Calcular límites con padding
+min_val = df_predicciones[['Real', 'Predicción']].min().min()
+max_val = df_predicciones[['Real', 'Predicción']].max().max()
+padding = (max_val - min_val) * 0.05
 
 base = alt.Chart(df_predicciones).properties(
     width=300,
     height=300
 )
 
-
+# Scatter plot con escalas ajustadas
 scatter = base.mark_circle(
     opacity=0.6, 
     size=60
 ).encode(
     x=alt.X('Real:Q', 
             title='Valor Real de Toxicity Score',
-            scale=alt.Scale(zero=False)),
+            scale=alt.Scale(domain=[min_val - padding, max_val + padding])),
     y=alt.Y('Predicción:Q', 
             title='Valor Predicho de Toxicity Score',
-            scale=alt.Scale(zero=False)),
+            scale=alt.Scale(domain=[min_val - padding, max_val + padding])),
     color=alt.Color('Modelo:N', 
                    legend=None,
                    scale=alt.Scale(scheme='set1')),
     tooltip=['Real', 'Predicción', 'Modelo', 'Error']
 )
 
-
+# Línea de referencia diagonal
 line = base.mark_line(
     color='red', 
     strokeDash=[5, 5],
     strokeWidth=2
-).transform_calculate(
-    x_min=f"{df_predicciones['Real'].min()}",
-    x_max=f"{df_predicciones['Real'].max()}"
 ).encode(
     x='Real:Q',
     y='Real:Q'
 )
 
-
+# Combinar y hacer facet
 chart_combinado = (scatter + line).facet(
     column='Modelo:N'
 ).properties(
