@@ -10,6 +10,12 @@ format:
 ---
 # PROYECTO DE APRENDIZAJE DE MAQUINA
 ### IMPORTACION DE TODAS LAS LIBRERIAS  SKLEARN, NLTK, PANDAS, ALTAIR 
+
+### EN ESTE PROYECTO SE TIENE UN DATAFRAME DE TWEETS UNA VARIABLE OBJETIVO TOXICITY_SCORE
+### USAREMOS ESTA VARIABLE TARGET PARA HACER NUESTROS MODELOS,ETC
+### LO PRIMERO SERA EL EDA DONDE NOS ADENTRAREMOS EN LOS DATOS DE ENTRADA Y PREPARARLOS 
+### SEGUNDO USAREMOS MODELOS NO SUPERVISADOS PARA HALLAR CLUSTERS USAREMOS KMEANS Y HAC PARA 
+### AGREGAR ALGUN VALOR EXTRA A LOS DATOS Y LUEGO PASAREMOS A REALIZAR LOS MODELOS DE CLASIFICACION ### Y REGRESION TODO ESTO JUNTO A OTRAS TECNICAS PARA OBSERVACION DE LOS DATOS
 ```{python}
 import pandas as pd
 import numpy as np
@@ -114,7 +120,7 @@ if 'toxicity_score' in numerical_columns:
 ```
 
 
-# gRAFICA DE NAN muestra valores nulos, vacios en el df
+# GRAFICA DE NAN muestra valores nulos, vacios en el df
 ### SE OBSERVA VARIOS VALORES FALTANTES EN SE IMPUTARAN EN TOXICITY SCORE 
 ```{python}
 # Tomar una muestra para que el gráfico no sea tan pesado
@@ -1256,26 +1262,26 @@ print(feature_importance_df.head(10).to_string(index=False))
 ```
 
 
-# DESPUES DE HABER GENERADO LOS MODELOS NO SUPERVISADOS Y AGREGAR INFORMACION
-# AL DATAFRAME Y LA VARIABLE OBJETIVO DIDIDIRLA EN BAJA Y ALTA TOXICIDAD HEMOS
-# OBTENIDO UN MEJOR VALOR PARA RANDOM FOREST CON 0.75 MIENTRAS QUE EN LA REGRESION CON # MODELO LINEAL HA UN VALOR ACEPTABLE QUE SE LO CON UN MAE DE 0.17 LO QUE ES UN BUEN # VALOR. SE PODRIA MEJOR ITENTANDO  USAR AJUSTE DE HIPERPARAMETROS AUMENTAR
-# 
+### DESPUES DE HABER GENERADO LOS MODELOS NO SUPERVISADOS Y AGREGAR INFORMACION
+### AL DATAFRAME Y LA VARIABLE OBJETIVO DIDIDIRLA EN BAJA Y ALTA TOXICIDAD HEMOS
+### OBTENIDO UN MEJOR VALOR PARA RANDOM FOREST CON 0.75 MIENTRAS QUE EN LA REGRESION CON # MODELO LINEAL HA UN VALOR ACEPTABLE QUE SE LO CON UN MAE DE 0.17 LO QUE ES UN BUEN # VALOR. SE PODRIA MEJOR ITENTANDO  USAR AJUSTE DE HIPERPARAMETROS AUMENTAR
+### 
 
-# Reflexionar sobre la calidad de los datos, la utilidad del target generado, el rendimiento de los #modelos y los patrones encontrados.
-# -La calidad de los datos afectan la prediccion del modelo, mientras mejores sean mejores modelos 
-# podremos entrenar. Estos datos a  mi parecer estaban bien distribuidos y se podrian hacer modelos # con este tipo de informacion.
+### Reflexionar sobre la calidad de los datos, la utilidad del target generado, el rendimiento de los #modelos y los patrones encontrados.
+### -La calidad de los datos afectan la prediccion del modelo, mientras mejores sean mejores modelos 
+### podremos entrenar. Estos datos a  mi parecer estaban bien distribuidos y se podrian hacer modelos ### con este tipo de informacion.
 
-# -El tarjet es algo muy importante en el ML en este caso sirve para modelos de regresion y poder 
-# estimarla es algo muy indispensable
+### -El tarjet es algo muy importante en el ML en este caso sirve para modelos de regresion y poder 
+### estimarla es algo muy indispensable
 
-# - Los modelos rindieron bastante bien, dieron valores muy buenos lo que nos da a decir que el se # modelaron bien 
+### - Los modelos rindieron bastante bien, dieron valores muy buenos lo que nos da a decir que el ### modelaron bien 
 
-# - Hay patrones muy interesantes en Hac hay un patron de toxicidad aparentemente donde se 
-# identificaron 3 grupos uno con la mayoria de personas en el con una toxicidad normal y 2 grupos 
-# con alta y otro grupo con baja toxicidad 
+### - Hay patrones muy interesantes en Hac hay un patron de toxicidad aparentemente donde se 
+### identificaron 3 grupos uno con la mayoria de personas en el con una toxicidad normal y 2 grupos 
+### con alta y otro grupo con baja toxicidad 
 
-# Probar con mas datos, imputar con otras alternativas usar la mediana y la moda probar otros modelos para ver como rinden . 
+### Probar con mas datos, imputar con otras alternativas usar la mediana y la moda probar otros modelos para ver como rinden . 
 
-# -Probar el modelo en toxicidad de nuevos tweets 
+#### -Probar el modelo en toxicidad de nuevos tweets 
 
-# -Quizas crear una Api para prediccion de bots basados en toxicidad, 
+### -Quizas crear una Api para prediccion de bots basados en toxicidad, 
