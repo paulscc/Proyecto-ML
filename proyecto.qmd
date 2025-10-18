@@ -1,0 +1,833 @@
+---
+title: " Proyecto "
+jupyter: python3
+author: "Cadena Paul"
+code-fold: false
+date: "18-10-2025"
+format: 
+    html:
+        embed-resources: true
+---
+# PROYECTO DE APRENDIZAJE DE MAQUINA
+### IMPORTACION DE TODAS LAS LIBRERIAS  SKLEARN, NLTK, PANDAS, ALTAIR 
+```{python}
+import pandas as pd
+import numpy as np
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+from nltk.tokenize import word_tokenize
+from nltk import pos_tag
+from nltk.corpus import wordnet
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans, AgglomerativeClustering
+from sklearn.preprocessing import StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import silhouette_score, classification_report, confusion_matrix, ConfusionMatrixDisplay, roc_auc_score, roc_curve, auc, accuracy_score, precision_score, recall_score, f1_score
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from scipy.cluster.hierarchy import dendrogram, linkage
+import altair as alt
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+nltk.download('stopwords')
+nltk.download('wordnet')
+nltk.download('punkt')
+nltk.download('averaged_perceptron_tagger')
+```
+
+### FUNCION PARA TRATAMIENTO DE TEXTO REDUCCION, LEMATIZACION 
+```{python}
+lemmatizer = WordNetLemmatizer()
+
+def get_wordnet_pos(treebank_tag):
+    if treebank_tag.startswith('J'):
+        return wordnet.ADJ
+    elif treebank_tag.startswith('V'):
+        return wordnet.VERB
+    elif treebank_tag.startswith('N'):
+        return wordnet.NOUN
+    elif treebank_tag.startswith('R'):
+        return wordnet.ADV
+    else:
+        return wordnet.NOUN
+
+def preprocessing_document(doc):
+    try:
+        doc = str(doc).lower()
+        tokens = word_tokenize(doc)
+        tagged_tokens = pos_tag(tokens)
+        filtered_tokens = [(word, pos) for (word, pos) in tagged_tokens if word.isalpha()]
+        lemmatized_words = [lemmatizer.lemmatize(word, get_wordnet_pos(pos)) for word, pos in filtered_tokens]
+        return " ".join(lemmatized_words)
+    except:
+        return ""
+```
+
+### IMPORTAMOS EL CSV DE NUEVOS TWEETS CON PANDAS
+```{python}
+url = "https://raw.githubusercontent.com/erickedu85/dataset/refs/heads/master/tweets/1500_tweets_con_toxicity.csv"
+df = pd.read_csv(url)
+```
+
+## EDA
+### BUSQUEDA DE COLUMNAS CON MAS DEL 70% DE FALTANTES, HASHTAGS TIENE 
+### DEMASIADAS FALTANTES, SE ELIMINARAN JUNTO A SENTIMENT Y SE USARA
+### DF_CLEANED PARA ESTE PROCESO 
+```{python}
+nan_percent = df.isna().mean() * 100
+threshold_nan = 70
+cols_to_drop = nan_percent[nan_percent > threshold_nan].index
+df_cleaned = df.drop(columns=cols_to_drop)
+df_cleaned = df_cleaned.drop(['hashtags', 'sentiment_polarity'], axis=1, errors='ignore')
+```
+
+### TRANSFORMACION DE VARIABLES FECHAS, DIA CREADO, FECHA CREACION DE CUENTAS Y SE CREAN COLUMNAS MAS ESPECIFICAS COMO DIAS CON LA CUENTA ,ETC 
+
+```{python}
+df_cleaned['createdAt'] = pd.to_datetime(df_cleaned['createdAt'], errors='coerce')
+df_cleaned['authorJoinDate'] = pd.to_datetime(df_cleaned['authorJoinDate'], errors='coerce')
+df_cleaned['diaCreated'] = df_cleaned['createdAt'].dt.day
+df_cleaned['diasDesdeCreacion'] = (pd.Timestamp.today() - df_cleaned['authorJoinDate']).dt.days
+df_cleaned = df_cleaned.drop(['authorJoinDate', 'createdAt'], axis=1, errors='ignore')
+```
+
+### SE HABILITARA LA MANIPULACION DE DATOS 
+```{python}
+alt.data_transformers.disable_max_rows()
+```
+
+### BUSQUEDA COLUMNAS CATEGORICAS NUMERICAS PARA SU DEBIDO TRATAMIENTO
+```{python}
+numerical_columns = df_cleaned.select_dtypes('number').columns.tolist()
+categorical_columns = df_cleaned.select_dtypes('object').columns.to_list()
+categorical_columns_remove = ['content', 'authorName', 'authorUsername', 'Director', 'content_cleaned']
+categorical_filtered = [col for col in categorical_columns if col not in categorical_columns_remove]
+
+if 'toxicity_score' in numerical_columns:
+    numerical_columns.remove('toxicity_score')
+```
+
+
+# gRAFICA DE NAN muestra valores nulos, vacios en el df
+```{python}
+# Tomar una muestra para que el gráfico no sea tan pesado
+
+
+# Crear DataFrame indicando dónde hay valores faltantes (True = faltante)
+df_null = df_cleaned.isnull()
+
+# Añadir índice para saber la fila
+df_null['row'] = df_null.index
+
+# Convertir a formato "largo" para Altair: columnas: row, column, is_missing
+df_melted = df_null.melt(id_vars='row', var_name='column', value_name='is_missing')
+
+# Gráfico de heatmap donde rojo indica missing
+chart = alt.Chart(df_melted).mark_rect().encode(
+    alt.X('row:O', axis=alt.Axis(title='Fila', labels=False, ticks=False)),
+    alt.Y('column:N', title='Columna'),
+    alt.Color('is_missing:N', scale=alt.Scale(domain=[True, False], range=['red', 'white']), title='Valor faltante')
+).properties(
+    width=800,
+    height=400,
+    title='Mapa de Valores Faltantes'
+)
+
+chart
+```
+
+
+```{python}
+df_cleaned["toxicity_score"].describe()
+```
+### SE OBSERVA UNA VARIABLE CONSISTENTE CON UNA FRECUENCIA MAYOR EN VALORES BAJOS
+### Y MENOR MIENTRAS SE ACERCA MAS AL VALOR 1, LO QUE SE ESPERA DE UNA VARIABLE DE TOXICIDAD (POCOS TOXICOS, MUCHOS NEUTRALES) 
+
+```{python}
+
+
+df_viz = df_cleaned.reset_index()
+
+# Crear gráfico de dispersión
+chart = alt.Chart(df_viz).mark_circle(size=60).encode(
+    x='index:Q',  # El índice como variable numérica
+    y='toxicity_score:Q',
+    tooltip=['index', 'toxicity_score']
+).properties(
+    width=600,
+    height=400,
+    title='Dispersión de Toxicity Score vs Índice'
+).interactive()
+
+chart
+```
+### CONTROL DE NULOS DATAFRAME,DATOS DUPLICADOS 
+
+
+```{python}
+
+
+duplicated_rows = df_cleaned[df_cleaned.duplicated()]
+print(duplicated_rows)
+```
+### SIN DUPLICADOS
+
+###  VARIABLES CATEGORICAS Y GRAFICO DE BARRAS 
+```{python}
+
+for col in categorical_filtered:
+    chart = alt.Chart(df_cleaned).mark_bar().encode(
+        x=alt.X(f"{col}:N", title=col),
+        y=alt.Y('count():Q', title='Frecuencia'),
+        tooltip=[f"{col}:N", 'count():Q']
+    ).properties(
+        title=f'Frecuencia de valores en {col}',
+        width=500,
+        height=300
+    ).interactive()
+    
+    display(chart) 
+```
+
+# MATRIZ DE GRAFICOS
+```{python}
+alt.Chart(df_cleaned).mark_rect().encode(
+    alt.X(alt.repeat('column'),type='quantitative',bin=alt.Bin(maxbins=30)),
+    alt.Y(alt.repeat('row'),type='quantitative',bin=alt.Bin(maxbins=30)),
+    alt.Color('count()'),
+    alt.Tooltip('count()')
+).properties(
+    width=100,
+    height=100
+).repeat(
+    column=numerical_columns,
+    row=numerical_columns
+).resolve_scale(
+    color='independent'
+)
+```
+### SE MANEJO EL DATAFRAME OBSERVANDO DATOS, PATRONES PARA FUTURO, SEELIMINARON NULOS DUPLICADOS,LA VARIABLE OBJETIVO TOXICITY TIENE VALORES DE 0 A 1 SIENDO 0 NEUTRAL Y 1 TOXICO,SU FRECUENCIA DISMINUYENDO MIENTRAS MAS SE ACERCA A 1, SE OBSERVARON LAS SIGUIENTES DATOS QUE NOS PODRIA SERVIR PARA EL ESTUDIO
+
+---
+
+##  CREAR CARACTERÍSTICAS TF-IDF-Stop words español,añadiendo palabras 
+## en contenido de tweets
+```{python}
+df_processed = df_cleaned.copy()
+df_processed['content_cleaned'] = df_processed['content'].apply(preprocessing_document)
+
+stop_words = stopwords.words("spanish")
+stop_words.extend(['rt', 'via', 'http', 'https', 'co', 'asi', 'así'])
+
+vectorizer = TfidfVectorizer(
+    max_features=50,
+    stop_words=stop_words,
+    min_df=5,
+    max_df=0.8
+)
+
+tfidf_matrix = vectorizer.fit_transform(df_processed['content_cleaned'])
+tfidf_df = pd.DataFrame(
+    tfidf_matrix.toarray(),
+    columns=[f'tfidf_{name}' for name in vectorizer.get_feature_names_out()]
+)
+```
+# Matriz tfidf en general con palabras mas importantes
+```{python}
+tfidf_df
+```
+
+##  CREAR CARACTERÍSTICAS TF-IDF-Stop words español,añadiendo palabras 
+### en contenido de tweets
+###  PIPELINE PARA EL KMEANS QUE NOS BRINDARA NUEVA INFORMACION ACERCA DE ESTE DATAFRAME
+
+```{python}
+behavior_features = [
+    'authorFollowers',
+    'account_age_days',
+    'mentions_count',
+    'content_length',
+    'time_response',
+    'hashtags_count',
+    'diaCreated',
+    'diasDesdeCreacion',
+]
+
+X_combined = pd.concat([
+    df_processed[behavior_features].reset_index(drop=True),
+    tfidf_df.reset_index(drop=True)
+], axis=1)
+
+numeric_indices = list(range(len(behavior_features)))
+tfidf_indices = list(range(len(behavior_features), X_combined.shape[1]))
+
+preprocessor_kmeans = ColumnTransformer(
+    transformers=[
+        ('num', StandardScaler(), numeric_indices),
+        ('tfidf', 'passthrough', tfidf_indices)
+    ]
+)
+
+pipeline_kmeans = Pipeline([
+    ('preprocessor', preprocessor_kmeans),
+    ('kmeans', KMeans(random_state=42, n_init=10))
+])
+
+k_range = [2, 3, 4, 5]
+sse_list = []
+silhouette_scores = []
+best_k = None
+best_score = -1
+
+for k in k_range:
+    pipeline_kmeans.set_params(kmeans__n_clusters=k)
+    predictions = pipeline_kmeans.fit_predict(X_combined)
+    kmeans_model = pipeline_kmeans.named_steps['kmeans']
+    sse_list.append(kmeans_model.inertia_)
+    sil_score = silhouette_score(X_combined, predictions)
+    silhouette_scores.append(sil_score)
+    
+    if sil_score > best_score:
+        best_score = sil_score
+        best_k = k
+```
+
+###  VISUALIZAR MÉTRICAS
+### se toma mayor valor de k segun silhouette
+
+### Asignacion de clusters al dataframe origen
+```{python}
+final_kmeans = KMeans(n_clusters=best_k, random_state=42, n_init=10)
+cluster_labels = final_kmeans.fit_predict(X_combined)
+df_processed['cluster_kmeans'] = cluster_labels
+```
+
+### GRAFICO DE CODO Y SILHOUETTE QUE NOS AYUDARA A VER EL MEJOR VALOR PARA K EN ESTE CASO SE ESCOJE K=3 MOSTRANDO EL MAYOR VALOR EN EL GRAFICO DE SILHOUETTE
+```{python}
+metrics_df = pd.DataFrame({
+    'K': list(k_range),
+    'SSE': sse_list,
+    'Silhouette': silhouette_scores
+})
+
+viz_sse = alt.Chart(metrics_df).mark_line(point=True).encode(
+    alt.X('K:O'),
+    alt.Y('SSE:Q'),
+    tooltip=['K', 'SSE']
+).properties(title='Método del Codo', width=300, height=250)
+
+viz_silhouette = alt.Chart(metrics_df).mark_line(point=True).encode(
+    alt.X('K:O'),
+    alt.Y('Silhouette:Q'),
+    tooltip=['K', 'Silhouette'],
+    color=alt.value('orange')
+).properties(title='Silhouette Score', width=300, height=250)
+
+(viz_sse | viz_silhouette)
+```
+### VISUALIZACION DE CLUSTERS
+
+```{python}
+
+import altair as alt
+
+
+viz_data = df_processed.copy()
+viz_data['followers_log'] = np.log1p(viz_data['authorFollowers'])
+
+cluster_viz = alt.Chart(viz_data).mark_circle(size=50).encode(
+    alt.X('followers_log:Q', title='Log(Seguidores)'),
+    alt.Y('account_age_days:Q', title='Edad Cuenta (días)'),
+    alt.Color('cluster_kmeans:N', title='Clúster'),
+    tooltip=['authorUsername', 'authorFollowers', 'account_age_days', 'cluster_kmeans']
+).properties(
+    title='Visualización de Clusters - Seguidores vs Edad Cuenta',
+    width=600,
+    height=400
+).interactive()
+
+print("\nVisualizando clusters...")
+cluster_viz
+```
+
+### tfidf , palabras mas importantes por cluster kmeans
+### se observa si hay alguna relacion entre losclusters encontrados y la variable 
+```{python}
+# Analizar términos distintivos por cluster
+def compare_cluster_terms():
+    print("Analizando términos distintivos por cluster...")
+    
+    for cluster_id in range(best_k):
+        # Filtrar documentos del cluster actual
+        cluster_mask = df_processed['cluster_kmeans'] == cluster_id
+        cluster_docs = df_processed[cluster_mask]['content_cleaned']
+        
+        print(f"Cluster {cluster_id}: {len(cluster_docs)} documentos")
+        
+        if len(cluster_docs) > 0:
+            # TF-IDF para este cluster específico
+            try:
+                cluster_tfidf = vectorizer.fit_transform(cluster_docs)
+                
+                # Términos más importantes
+                feature_names = vectorizer.get_feature_names_out()
+                tfidf_scores = cluster_tfidf.mean(axis=0).A1
+                top_indices = tfidf_scores.argsort()[-10:][::-1]
+                
+                top_terms = [feature_names[i] for i in top_indices]
+                print(f"Cluster {cluster_id} - Top términos: {top_terms}")
+                print("-" * 50)
+                
+            except Exception as e:
+                print(f"Error procesando cluster {cluster_id}: {e}")
+        else:
+            print(f"Cluster {cluster_id} vacío")
+
+# Ejecutar análisis
+
+compare_cluster_terms()
+```
+
+## DESAROLLO DE HAC 
+### PIPELINE  Y GRAFICO DE ESTE MODELO
+### Y GUARDADO DE DATOS EN EL DATAFRAME 
+```{python}
+pipeline_hac = Pipeline([
+    ('scaler', StandardScaler()),
+    ('agglo', AgglomerativeClustering(n_clusters=3))
+])
+
+labels_hac = pipeline_hac.fit_predict(X_combined)
+df_processed['cluster_hac'] = labels_hac
+
+X_scaled = pipeline_hac.named_steps['scaler'].transform(X_combined)
+linked = linkage(X_scaled, method='complete')
+
+plt.figure(figsize=(15, 7))
+dendrogram(linked, orientation='top', distance_sort='descending', show_leaf_counts=True, leaf_font_size=8)
+plt.title("Dendrogram - Clustering Jerárquico (Método Complete)", fontsize=14)
+plt.xlabel("Sample Index")
+plt.ylabel("Distance")
+plt.tight_layout()
+plt.show()
+```
+
+### VISUALIZACION DE DISPERSION PARA ESTE CLUSTERING
+
+```{python}
+X_scaled = pipeline_hac.named_steps['scaler'].transform(X_combined)
+
+df_viz = pd.DataFrame({
+    'authorFollowers': X_scaled[:, 0],
+    'account_age_days': X_scaled[:, 1],
+    'clusters': labels_hac.astype(str),
+    'index': df_processed.index.astype(str)
+})
+
+scatter = alt.Chart(df_viz).mark_circle(size=65).encode(
+    alt.X('authorFollowers:Q', title='AuthorFollowers (escalado)'),
+    alt.Y('account_age_days:Q', title='Account Age Days (escalado)'),
+    alt.Color('clusters:N', title='Cluster'),
+    tooltip=['authorFollowers', 'account_age_days', 'index', 'clusters']
+).interactive()
+
+texto_scatter = alt.Chart(df_viz).mark_text(
+    align='left',
+    dx=5,
+    baseline='middle',
+    fontSize=8
+).encode(
+    alt.X('authorFollowers:Q'),
+    alt.Y('account_age_days:Q'),
+    text='index'
+)
+
+(scatter + texto_scatter).properties(
+    width=500,
+    height=500,
+    title='Clustering Jerárquico - Seguidores vs Edad Cuenta'
+)
+
+print("\n" + "=" * 70)
+print("ANÁLISIS DE CLUSTERS HAC")
+print("=" * 70)
+
+for cluster_id in range(3):
+    cluster_data = df_processed[df_processed['cluster_hac'] == cluster_id]
+    print(f"\nClúster {cluster_id} (n={len(cluster_data)}):")
+    print(f"  - Seguidores promedio: {cluster_data['authorFollowers'].mean():.0f}")
+    print(f"  - Edad cuenta (días): {cluster_data['account_age_days'].mean():.0f}")
+    print(f"  - Menciones por tweet: {cluster_data['mentions_count'].mean():.2f}")
+    print(f"  - Toxicidad promedio: {cluster_data['toxicity_score'].mean():.3f}")
+```
+
+```{python}
+scatter + texto_scatter
+```
+
+### IMPRIMIMOS DETALLES SOBRELOS DATOSDE ESTE CLUSTERING COMO SEGUIDORES
+### Y VEMOS QUE HAY 3 GRUPOS UNO CON MUCHAS PERSONAS,Y OTROS CON POCAS, 
+### AL PARECER ESTOS 2 GRUPOS TIENEN LA MAYOR Y MENOR CANTIDAD DE TOXICIDAD
+### PODRIA SER UN INDICADOR DE BOTS 
+```{python}
+X_scaled = pipeline_hac.named_steps['scaler'].transform(X_combined)
+
+df_viz = pd.DataFrame({
+    'authorFollowers': X_scaled[:, 0],
+    'account_age_days': X_scaled[:, 1],
+    'clusters': labels_hac.astype(str),
+    'index': df_processed.index.astype(str)
+})
+
+scatter = alt.Chart(df_viz).mark_circle(size=65).encode(
+    alt.X('authorFollowers:Q', title='AuthorFollowers (escalado)'),
+    alt.Y('account_age_days:Q', title='Account Age Days (escalado)'),
+    alt.Color('clusters:N', title='Cluster'),
+    tooltip=['authorFollowers', 'account_age_days', 'index', 'clusters']
+).interactive()
+
+texto_scatter = alt.Chart(df_viz).mark_text(
+    align='left',
+    dx=5,
+    baseline='middle',
+    fontSize=8
+).encode(
+    alt.X('authorFollowers:Q'),
+    alt.Y('account_age_days:Q'),
+    text='index'
+)
+
+(scatter + texto_scatter).properties(
+    width=500,
+    height=500,
+    title='Clustering Jerárquico - Seguidores vs Edad Cuenta'
+)
+
+scatter + texto_scatter
+
+print("\n" + "=" * 70)
+print("ANÁLISIS DE CLUSTERS HAC")
+print("=" * 70)
+
+for cluster_id in range(3):
+    cluster_data = df_processed[df_processed['cluster_hac'] == cluster_id]
+    print(f"\nClúster {cluster_id} (n={len(cluster_data)}):")
+    print(f"  - Seguidores promedio: {cluster_data['authorFollowers'].mean():.0f}")
+    print(f"  - Edad cuenta (días): {cluster_data['account_age_days'].mean():.0f}")
+    print(f"  - Menciones por tweet: {cluster_data['mentions_count'].mean():.2f}")
+    print(f"  - Toxicidad promedio: {cluster_data['toxicity_score'].mean():.3f}")
+```
+
+# AHORA QUE YA HEMOS EJECUTADO ESTOS MODELOS EL DATAFRAME TIENE  MAS INFORMACION ESTO ES DE GRAN IMPORTANCIA PARA LOS SIGUIENTES MODELOS 
+
+### Definicion de PIPELINES,COLUMN TRANSFORM Y DIVISION DE DATOS
+### DEFINICION VARIABLE OBJETIVO SI ES MAYOR QUE LA MEDIA SERA TOXICIDAD ALTA, Y BAJA CASO CONTRARIO
+```{python}
+toxicity_threshold = df_processed['toxicity_score'].median()
+y_binary = (df_processed['toxicity_score'] > toxicity_threshold).astype(int)
+
+cols_drop = ['toxicity_score', 'content_cleaned', 'cluster_kmeans', 'cluster_hac', 'content', 'authorName', 'authorUsername']
+cols_drop = [col for col in cols_drop if col in df_processed.columns]
+X = df_processed.drop(cols_drop, axis=1)
+
+nominal_cols = [col for col in categorical_filtered if col in X.columns]
+numeric_cols = [col for col in behavior_features if col in X.columns]
+
+nominal_pipeline = Pipeline([
+    ('imputacion_nom', SimpleImputer(strategy='most_frequent')),
+    ('encodage_nom', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+])
+
+numeric_pipeline = Pipeline([
+    ('imputacion_num', SimpleImputer(strategy='median')),
+    ('escalamiento', StandardScaler())
+])
+
+preprocessor_classification = ColumnTransformer([
+    ('nom', nominal_pipeline, nominal_cols),
+    ('num', numeric_pipeline, numeric_cols)
+], remainder='drop')
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y_binary, test_size=0.2, stratify=y_binary, random_state=42
+)
+
+pipeline_knn = Pipeline([
+    ('preprocessor', preprocessor_classification),
+    ('clasificador', KNeighborsClassifier())
+])
+```
+
+### PRIMERO SE PROBARA EL MODELO KNN CON GRIDSEARCH PARA USO DE HIPERPARAMETROS
+```{python}
+param_grid_knn = {
+    'clasificador__n_neighbors': [3, 5, 7, 9, 11],
+    'clasificador__weights': ['uniform', 'distance'],
+    'clasificador__metric': ['euclidean', 'manhattan']
+}
+
+grid_knn = GridSearchCV(
+    pipeline_knn,
+    param_grid_knn,
+    cv=5,
+    scoring='f1_weighted',
+    n_jobs=1,
+    verbose=1
+)
+
+grid_knn.fit(X_train, y_train)
+best_model_knn = grid_knn.best_estimator_
+y_pred_knn = best_model_knn.predict(X_test)
+```
+
+### 0.64 PARA KNN PREDICE MEJOR QUE LA MEDIA 
+```{python}
+print("=" * 70)
+print("KNN - MEJORES PARÁMETROS Y EVALUACIÓN")
+print("=" * 70)
+print(grid_knn.best_params_)
+print(f"\nMejor puntuación CV: {grid_knn.best_score_:.4f}")
+print(f"Accuracy en test: {best_model_knn.score(X_test, y_test):.4f}")
+print("\nReporte de Clasificación:")
+print(classification_report(y_test, y_pred_knn, target_names=['Toxicidad Baja', 'Toxicidad Alta']))
+```
+
+### MATRIZ DE CONFUCION PARA KNN 
+```{python}
+plt.figure(figsize=(8, 6))
+ConfusionMatrixDisplay(
+    confusion_matrix(y_test, y_pred_knn),
+    display_labels=['Toxicidad Baja', 'Toxicidad Alta']
+).plot()
+plt.title('Matriz de Confusión - KNN')
+plt.tight_layout()
+plt.show()
+```
+
+# DEFINICION DE MODELOS RANDOM Y GRADIENT
+```{python}
+modelos = {
+    'Random Forest': Pipeline([
+        ('preprocessor', preprocessor_classification),
+        ('clasificador', RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1))
+    ]),
+    'Gradient Boosting': Pipeline([
+        ('preprocessor', preprocessor_classification),
+        ('clasificador', GradientBoostingClassifier(n_estimators=100, random_state=42))
+    ])
+}
+```
+
+#  ENTRENAMIENTO Y EVALUACIÓN 
+```{python}
+resultados = {}
+predicciones = {}
+
+print("\n" + "=" * 70)
+print("ENTRENAMIENTO Y EVALUACIÓN DE MODELOS")
+print("=" * 70)
+
+for nombre_modelo, modelo in modelos.items():
+    print(f"\nModelo: {nombre_modelo}")
+    modelo.fit(X_train, y_train)
+    
+    y_pred = modelo.predict(X_test)
+    y_pred_proba = modelo.predict_proba(X_test)[:, 1]
+    
+    predicciones[nombre_modelo] = {'y_pred': y_pred, 'y_pred_proba': y_pred_proba}
+    
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred)
+    recall = recall_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
+    roc_auc = roc_auc_score(y_test, y_pred_proba)
+    
+    resultados[nombre_modelo] = {
+        'accuracy': accuracy,
+        'precision': precision,
+        'recall': recall,
+        'f1': f1,
+        'roc_auc': roc_auc
+    }
+    
+    print(f"Accuracy:  {accuracy:.4f}")
+    print(f"Precision: {precision:.4f}")
+    print(f"Recall:    {recall:.4f}")
+    print(f"F1-Score:  {f1:.4f}")
+    print(f"ROC-AUC:   {roc_auc:.4f}")
+    print(classification_report(y_test, y_pred, target_names=['Baja Toxicidad', 'Alta Toxicidad']))
+```
+
+### ENTRE AMBOS MODELOS SE  ENCUENTRAN EN LOS MISMOS VALORES AMBOS CERCANOS AL 0.70
+```{python}
+df_resultados = pd.DataFrame(resultados).T
+print("\n" + "=" * 70)
+print("COMPARACIÓN DE MODELOS")
+print("=" * 70)
+print(df_resultados.round(4))
+
+df_metricas = df_resultados.reset_index().melt(id_vars='index', var_name='metrica', value_name='valor')
+df_metricas.rename(columns={'index': 'modelo'}, inplace=True)
+
+heatmap = alt.Chart(df_metricas).mark_rect().encode(
+    alt.X('metrica:N', title='Métrica'),
+    alt.Y('modelo:N', title='Modelo'),
+    alt.Color('valor:Q', scale=alt.Scale(scheme='viridis', domain=[0, 1]), title='Score'),
+    tooltip=['modelo', 'metrica', alt.Tooltip('valor:Q', format='.4f')]
+).properties(width=400, height=200, title='Heatmap de Métricas de Desempeño').interactive()
+
+heatmap
+```
+
+
+```{python}
+roc_data = []
+for nombre_modelo, preds in predicciones.items():
+    y_pred_proba = preds['y_pred_proba']
+    fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+    roc_auc = auc(fpr, tpr)
+    for fp, tp in zip(fpr, tpr):
+        roc_data.append({'FPR': fp, 'TPR': tp, 'Modelo': f'{nombre_modelo} (AUC={roc_auc:.3f})'})
+
+for i in np.linspace(0, 1, 100):
+    roc_data.append({'FPR': i, 'TPR': i, 'Modelo': 'Random Classifier'})
+
+df_roc = pd.DataFrame(roc_data)
+```
+
+### MATRICES DE CONFUCION AMBAS RINDEN BIEN PERO EL RANDOM FOREST RINDE MEJOR
+```{python}
+print("\n" + "=" * 70)
+print("MATRIZ DE CONFUSIÓN - MODELO 1")
+print("=" * 70)
+
+# Obtener predicciones del primer modelo
+nombre_modelo1 = list(predicciones.keys())[0]
+preds1 = predicciones[nombre_modelo1]
+y_pred1 = preds1['y_pred']
+cm1 = confusion_matrix(y_test, y_pred1)
+
+# Convertir matriz de confusión a formato long para Altair
+cm_data1 = []
+for i, label_real in enumerate(['Baja', 'Alta']):
+    for j, label_pred in enumerate(['Baja', 'Alta']):
+        cm_data1.append({
+            'Verdadero': label_real,
+            'Predicho': label_pred,
+            'Cantidad': int(cm1[i, j])
+        })
+
+df_cm1 = pd.DataFrame(cm_data1)
+
+# Crear heatmap
+cm_chart1 = alt.Chart(df_cm1).mark_rect().encode(
+    alt.X('Predicho:N', title='Predicho'),
+    alt.Y('Verdadero:N', title='Verdadero'),
+    alt.Color('Cantidad:Q', scale=alt.Scale(scheme='blues'), title='Cantidad'),
+    tooltip=['Verdadero', 'Predicho', 'Cantidad']
+).properties(
+    width=300,
+    height=300,
+    title=f'Matriz de Confusión - {nombre_modelo1}'
+)
+
+# Texto con las cantidades
+text1 = alt.Chart(df_cm1).mark_text(baseline='middle').encode(
+    alt.X('Predicho:N'),
+    alt.Y('Verdadero:N'),
+    text='Cantidad:Q'
+)
+
+# Mostrar el gráfico combinado
+(cm_chart1 + text1)
+print(f"\nMatriz de Confusión - {nombre_modelo1}:")
+
+(cm_chart1 + text1)
+(cm_chart1 + text1)
+```
+
+```{python}
+print("\n" + "=" * 70)
+print("MODELO 2")
+print("=" * 70)
+
+# Obtener predicciones del segundo modelo
+nombre_modelo2 = list(predicciones.keys())[1]
+preds2 = predicciones[nombre_modelo2]
+y_pred2 = preds2['y_pred']
+cm2 = confusion_matrix(y_test, y_pred2)
+
+# Convertir matriz de confusión a formato long para Altair
+cm_data2 = []
+for i, label_real in enumerate(['Baja', 'Alta']):
+    for j, label_pred in enumerate(['Baja', 'Alta']):
+        cm_data2.append({
+            'Verdadero': label_real,
+            'Predicho': label_pred,
+            'Cantidad': int(cm2[i, j])
+        })
+
+df_cm2 = pd.DataFrame(cm_data2)
+
+# Crear heatmap
+cm_chart2 = alt.Chart(df_cm2).mark_rect().encode(
+    alt.X('Predicho:N', title='Predicho'),
+    alt.Y('Verdadero:N', title='Verdadero'),
+    alt.Color('Cantidad:Q', scale=alt.Scale(scheme='blues'), title='Cantidad'),
+    tooltip=['Verdadero', 'Predicho', 'Cantidad']
+).properties(
+    width=300,
+    height=300,
+    title=f'Matriz de Confusión - {nombre_modelo2}'
+)
+
+# Texto con las cantidades
+text2 = alt.Chart(df_cm2).mark_text(baseline='middle').encode(
+    alt.X('Predicho:N'),
+    alt.Y('Verdadero:N'),
+    text='Cantidad:Q'
+)
+
+# Mostrar el gráfico combinado
+(cm_chart2 + text2)
+print(f"\nMatriz de Confusión - {nombre_modelo2}:")
+(cm_chart2 + text2)
+
+(cm_chart2 + text2)
+```
+### CURVA ROC PARA AMBOS MODELOS, AMBOS SE DESEMPEÑAN BIEN DANDO VALORES MAYORES QUE LA MEDIA
+```{python}
+roc_chart = alt.Chart(df_roc).mark_line(point=True).encode(
+    alt.X('FPR:Q', title='False Positive Rate', scale=alt.Scale(domain=[0, 1])),
+    alt.Y('TPR:Q', title='True Positive Rate', scale=alt.Scale(domain=[0, 1])),
+    alt.Color('Modelo:N', title='Modelo'),
+    tooltip=['FPR', 'TPR', 'Modelo']
+).properties(width=500, height=400, title='Curva ROC - Comparación de Modelos').interactive()
+
+roc_chart
+```
+
+### EL MODELORANDOM FOREST TUVO MEJORES RESULTADOS EN GENERAL Y DIO MEJOR RENDIMIENTO 
+```{python}
+print("\n" + "=" * 70)
+print("RESUMEN FINAL")
+print("=" * 70)
+print(f"Mejor modelo por ROC-AUC: {df_resultados['roc_auc'].idxmax()}")
+print(f"  ROC-AUC: {df_resultados['roc_auc'].max():.4f}")
+print(f"Mejor modelo por F1-Score: {df_resultados['f1'].idxmax()}")
+print(f"  F1-Score: {df_resultados['f1'].max():.4f}")
+```
+
+
+### DESPUES DE HABER GENERADO LOS MODELOS NO SUPERVISADOS Y AGREGAR INFORMACION 
+### AL DATAFRAME Y LA VARIABLE OBJETIVO DIDIDIRLA EN BAJA Y ALTA TOXICIDAD HEMOS 
+### OBTENIDO UN MEJOR VALOR PARA RANDOM FOREST CON 0.75 UN VALOR ACEPTABLE QUE SE LO 
+### PODRIA SEGUIR AUMENTANDO ESTE VALOR PARA USAR AJUSTE E HIPERPARAMETROS AUMENTAR
+### LA CANTIDAD DE DATOS Y PROBAR OTRAS OPCIONES DE ESCALAMIENTO DE IMPUTACION DE
+### VALORES QUIZAS LA MEDIANA,ETC PROBAR OTROS MODELOS 

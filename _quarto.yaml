@@ -1,0 +1,24 @@
+project:
+  type: website
+  output-dir: docs
+
+website:
+  title: "Trabajo Práctico N°4"
+  sidebar:
+    style: "docked"
+    search: true
+    contents:
+     
+      
+      - text: "Lab 2"
+        href: proyecto.qmd
+      
+      
+      
+format:
+  html:
+    theme: cosmo
+    toc: true
+    code-fold: true
+    fig-align: center
+
