@@ -115,6 +115,7 @@ if 'toxicity_score' in numerical_columns:
 
 
 # gRAFICA DE NAN muestra valores nulos, vacios en el df
+### SE OBSERVA VARIOS VALORES FALTANTES EN SE IMPUTARAN EN TOXICITY SCORE 
 ```{python}
 # Tomar una muestra para que el gráfico no sea tan pesado
 
@@ -141,7 +142,63 @@ chart = alt.Chart(df_melted).mark_rect().encode(
 
 chart
 ```
+### debido a la falta de datos se imputaran  estos valores con la media o mediana
+```{python}
+print(f"Registros iniciales: {len(df_cleaned)}")
+print(f"NaN en toxicity_score: {df_cleaned['toxicity_score'].isna().sum()}")
 
+# Analizar distribución para decidir media vs mediana
+y_antes = df_cleaned['toxicity_score']
+skewness = y_antes.skew()
+print(f"Sesgo (Skewness): {skewness:.4f}\n")
+
+# Decidir estrategia basado en sesgo
+if abs(skewness) > 1:
+    estrategia = 'median'
+    print("✓ Distribución sesgada → Usando MEDIANA")
+else:
+    estrategia = 'mean'
+    print("✓ Distribución simétrica → Usando MEDIA")
+
+# Imputar valores faltantes
+imputer = SimpleImputer(strategy=estrategia)
+df_cleaned['toxicity_score'] = imputer.fit_transform(df_cleaned[['toxicity_score']]).flatten()
+
+# Verificar resultado
+valor_imputacion = imputer.statistics_[0]
+print(f"Valor de imputación utilizado: {valor_imputacion:.4f}")
+print(f"NaN después de imputación: {df_cleaned['toxicity_score'].isna().sum()}")
+print(f"Registros totales: {len(df_cleaned)}\n")
+```
+
+```{python}
+
+# Tomar una muestra para que el gráfico no sea tan pesado
+
+
+# Crear DataFrame indicando dónde hay valores faltantes (True = faltante)
+df_null = df_cleaned.isnull()
+
+# Añadir índice para saber la fila
+df_null['row'] = df_null.index
+
+# Convertir a formato "largo" para Altair: columnas: row, column, is_missing
+df_melted = df_null.melt(id_vars='row', var_name='column', value_name='is_missing')
+
+# Gráfico de heatmap donde rojo indica missing
+chart = alt.Chart(df_melted).mark_rect().encode(
+    alt.X('row:O', axis=alt.Axis(title='Fila', labels=False, ticks=False)),
+    alt.Y('column:N', title='Columna'),
+    alt.Color('is_missing:N', scale=alt.Scale(domain=[True, False], range=['red', 'white']), title='Valor faltante')
+).properties(
+    width=800,
+    height=400,
+    title='Mapa de Valores Faltantes'
+)
+
+chart
+
+```
 
 ```{python}
 df_cleaned["toxicity_score"].describe()
@@ -532,7 +589,7 @@ for cluster_id in range(3):
 toxicity_threshold = df_processed['toxicity_score'].median()
 y_binary = (df_processed['toxicity_score'] > toxicity_threshold).astype(int)
 
-cols_drop = ['toxicity_score', 'content_cleaned', 'cluster_kmeans', 'cluster_hac', 'content', 'authorName', 'authorUsername']
+cols_drop = ['toxicity_score', 'content_cleaned', 'content', 'authorName', 'authorUsername']
 cols_drop = [col for col in cols_drop if col in df_processed.columns]
 X = df_processed.drop(cols_drop, axis=1)
 
@@ -549,7 +606,7 @@ numeric_pipeline = Pipeline([
     ('escalamiento', StandardScaler())
 ])
 
-preprocessor_classification = ColumnTransformer([
+preprocessor = ColumnTransformer([
     ('nom', nominal_pipeline, nominal_cols),
     ('num', numeric_pipeline, numeric_cols)
 ], remainder='drop')
@@ -559,7 +616,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 pipeline_knn = Pipeline([
-    ('preprocessor', preprocessor_classification),
+    ('preprocessor', preprocessor),
     ('clasificador', KNeighborsClassifier())
 ])
 ```
@@ -610,15 +667,15 @@ plt.tight_layout()
 plt.show()
 ```
 
-# DEFINICION DE MODELOS RANDOM Y GRADIENT
+# DEFINICION DE MODELOS RANDOM Y GRADIENT PARA CLASIFICACION
 ```{python}
 modelos = {
     'Random Forest': Pipeline([
-        ('preprocessor', preprocessor_classification),
+        ('preprocessor', preprocessor),
         ('clasificador', RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1))
     ]),
     'Gradient Boosting': Pipeline([
-        ('preprocessor', preprocessor_classification),
+        ('preprocessor', preprocessor),
         ('clasificador', GradientBoostingClassifier(n_estimators=100, random_state=42))
     ])
 }
@@ -664,7 +721,7 @@ for nombre_modelo, modelo in modelos.items():
     print(classification_report(y_test, y_pred, target_names=['Baja Toxicidad', 'Alta Toxicidad']))
 ```
 
-### ENTRE AMBOS MODELOS SE  ENCUENTRAN EN LOS MISMOS VALORES AMBOS CERCANOS AL 0.70
+### ENTRE AMBOS MODELOS SE  ENCUENTRAN EN LOS MISMOS VALORES AMBOS CERCANOS AL 0.70 CON UNA VENTAJA PARA RANDOM FOREST
 ```{python}
 df_resultados = pd.DataFrame(resultados).T
 print("\n" + "=" * 70)
@@ -825,9 +882,372 @@ print(f"  F1-Score: {df_resultados['f1'].max():.4f}")
 ```
 
 
-### DESPUES DE HABER GENERADO LOS MODELOS NO SUPERVISADOS Y AGREGAR INFORMACION 
-### AL DATAFRAME Y LA VARIABLE OBJETIVO DIDIDIRLA EN BAJA Y ALTA TOXICIDAD HEMOS 
-### OBTENIDO UN MEJOR VALOR PARA RANDOM FOREST CON 0.75 UN VALOR ACEPTABLE QUE SE LO 
-### PODRIA SEGUIR AUMENTANDO ESTE VALOR PARA USAR AJUSTE E HIPERPARAMETROS AUMENTAR
-### LA CANTIDAD DE DATOS Y PROBAR OTRAS OPCIONES DE ESCALAMIENTO DE IMPUTACION DE
-### VALORES QUIZAS LA MEDIANA,ETC PROBAR OTROS MODELOS 
+
+
+# MODELOS DE REGRESION 
+### SE USARA LINEAL REGRESION  Y ARBOLES DE DECISION
+
+
+```{python}
+import pandas as pd
+import numpy as np
+import altair as alt
+from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LinearRegression
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+import warnings
+warnings.filterwarnings('ignore')
+
+```
+
+
+```{python}
+
+y = df_processed['toxicity_score']
+
+print(f"Registros totales: {len(df_processed)}")
+print(f"NaN en toxicity_score: {y.isna().sum()}\n")
+
+# Definir features a eliminar
+cols_drop = ['toxicity_score', 'content_cleaned', 'content', 'authorName', 'authorUsername']
+cols_drop = [col for col in cols_drop if col in df_processed.columns]
+X = df_processed.drop(cols_drop, axis=1)
+
+# Separar columnas nominales y numéricas
+nominal_cols = [col for col in categorical_filtered if col in X.columns]
+numeric_cols = [col for col in behavior_features if col in X.columns]
+
+print(f"Variables nominales: {len(nominal_cols)}")
+print(f"Variables numéricas: {len(numeric_cols)}")
+print(f"Total features: {X.shape[1]}\n")
+```
+
+
+```{python}
+
+print(f"Tamaño entrenamiento: {X_train.shape}")
+print(f"Tamaño prueba: {X_test.shape}\n")
+```
+
+
+```{python}
+print("="*70)
+print("REGRESIÓN LINEAL")
+print("="*70)
+
+pipeline_lr = Pipeline([
+    ('preprocessor', preprocessor),
+    ('modelo', LinearRegression())
+])
+
+# Entrenar
+pipeline_lr.fit(X_train, y_train)
+
+# Predicciones
+y_pred_lr_train = pipeline_lr.predict(X_train)
+y_pred_lr_test = pipeline_lr.predict(X_test)
+
+# Métricas
+mse_lr_train = mean_squared_error(y_train, y_pred_lr_train)
+mse_lr_test = mean_squared_error(y_test, y_pred_lr_test)
+rmse_lr_train = np.sqrt(mse_lr_train)
+rmse_lr_test = np.sqrt(mse_lr_test)
+mae_lr_test = mean_absolute_error(y_test, y_pred_lr_test)
+r2_lr_train = r2_score(y_train, y_pred_lr_train)
+r2_lr_test = r2_score(y_test, y_pred_lr_test)
+
+print(f"Entrenamiento - RMSE: {rmse_lr_train:.4f}, R²: {r2_lr_train:.4f}")
+print(f"Prueba        - RMSE: {rmse_lr_test:.4f}, R²: {r2_lr_test:.4f}")
+print(f"MAE (Prueba)  : {mae_lr_test:.4f}\n")
+```
+
+
+```{python}
+print("="*70)
+print("ÁRBOL DE DECISIÓN - BÚSQUEDA DE HIPERPARÁMETROS")
+print("="*70)
+
+pipeline_dt_base = Pipeline([
+    ('preprocessor', preprocessor),
+    ('modelo', DecisionTreeRegressor(random_state=42))
+])
+
+
+param_grid = {
+    'modelo__max_depth': [5, 10, 15, 20, None],
+    'modelo__min_samples_split': [2, 5, 10, 20],
+    'modelo__min_samples_leaf': [1, 2, 4, 8]
+}
+
+grid_search = GridSearchCV(
+    pipeline_dt_base,
+    param_grid,
+    cv=5,
+    scoring='r2',
+    n_jobs=1,
+    verbose=0
+)
+
+grid_search.fit(X_train, y_train)
+
+print(f"Mejores parámetros: {grid_search.best_params_}")
+print(f"Mejor R² (CV): {grid_search.best_score_:.4f}\n")
+
+# Modelo óptimo
+pipeline_dt = grid_search.best_estimator_
+
+# Predicciones
+y_pred_dt_train = pipeline_dt.predict(X_train)
+y_pred_dt_test = pipeline_dt.predict(X_test)
+
+# Métricas
+mse_dt_train = mean_squared_error(y_train, y_pred_dt_train)
+mse_dt_test = mean_squared_error(y_test, y_pred_dt_test)
+rmse_dt_train = np.sqrt(mse_dt_train)
+rmse_dt_test = np.sqrt(mse_dt_test)
+mae_dt_test = mean_absolute_error(y_test, y_pred_dt_test)
+r2_dt_train = r2_score(y_train, y_pred_dt_train)
+r2_dt_test = r2_score(y_test, y_pred_dt_test)
+
+print("="*70)
+print("ÁRBOL DE DECISIÓN - RESULTADOS FINALES")
+print("="*70)
+print(f"Entrenamiento - RMSE: {rmse_dt_train:.4f}, R²: {r2_dt_train:.4f}")
+print(f"Prueba        - RMSE: {rmse_dt_test:.4f}, R²: {r2_dt_test:.4f}")
+print(f"MAE (Prueba)  : {mae_dt_test:.4f}\n")
+
+
+```
+
+
+```{python}
+print("="*70)
+print("COMPARACIÓN DE MODELOS")
+print("="*70)
+
+comparison_df = pd.DataFrame({
+    'Modelo': ['Regresión Lineal', 'Árbol de Decisión'],
+    'RMSE Entrenamiento': [rmse_lr_train, rmse_dt_train],
+    'RMSE Prueba': [rmse_lr_test, rmse_dt_test],
+    'R² Entrenamiento': [r2_lr_train, r2_dt_train],
+    'R² Prueba': [r2_lr_test, r2_dt_test],
+    'MAE Prueba': [mae_lr_test, mae_dt_test]
+})
+
+print(comparison_df.to_string(index=False))
+print()
+
+
+
+df_lr_pred = pd.DataFrame({
+    'Real': y_test.values,
+    'Predicción': y_pred_lr_test,
+    'Modelo': 'Regresión Lineal'
+})
+
+df_dt_pred = pd.DataFrame({
+    'Real': y_test.values,
+    'Predicción': y_pred_dt_test,
+    'Modelo': 'Árbol de Decisión'
+})
+
+df_predicciones = pd.concat([df_lr_pred, df_dt_pred], ignore_index=True)
+```
+
+
+```{python}
+
+df_lr_pred = pd.DataFrame({
+    'Real': y_test.values,
+    'Predicción': y_pred_lr_test,
+    'Modelo': 'Regresión Lineal',
+    'Error': np.abs(y_test.values - y_pred_lr_test)
+})
+
+df_dt_pred = pd.DataFrame({
+    'Real': y_test.values,
+    'Predicción': y_pred_dt_test,
+    'Modelo': 'Árbol de Decisión',
+    'Error': np.abs(y_test.values - y_pred_dt_test)
+})
+
+df_predicciones = pd.concat([df_lr_pred, df_dt_pred], ignore_index=True)
+
+
+base = alt.Chart(df_predicciones).properties(
+    width=300,
+    height=300
+)
+
+
+scatter = base.mark_circle(
+    opacity=0.6, 
+    size=60
+).encode(
+    x=alt.X('Real:Q', 
+            title='Valor Real de Toxicity Score',
+            scale=alt.Scale(zero=False)),
+    y=alt.Y('Predicción:Q', 
+            title='Valor Predicho de Toxicity Score',
+            scale=alt.Scale(zero=False)),
+    color=alt.Color('Modelo:N', 
+                   legend=None,
+                   scale=alt.Scale(scheme='set1')),
+    tooltip=['Real', 'Predicción', 'Modelo', 'Error']
+)
+
+
+line = base.mark_line(
+    color='red', 
+    strokeDash=[5, 5],
+    strokeWidth=2
+).transform_calculate(
+    x_min=f"{df_predicciones['Real'].min()}",
+    x_max=f"{df_predicciones['Real'].max()}"
+).encode(
+    x='Real:Q',
+    y='Real:Q'
+)
+
+
+chart_combinado = (scatter + line).facet(
+    column='Modelo:N'
+).properties(
+    title='Comparación: Predicciones vs Valores Reales - Modelos de Regresión'
+)
+
+chart_combinado
+```
+### GRAFICO DE ERRORES RESIDUALES
+```{python}
+# Calcular residuales
+df_residuales_lr = pd.DataFrame({
+    'Predicción': y_pred_lr_test,
+    'Residual': y_test.values - y_pred_lr_test,
+    'Modelo': 'Regresión Lineal'
+})
+
+df_residuales_dt = pd.DataFrame({
+    'Predicción': y_pred_dt_test,
+    'Residual': y_test.values - y_pred_dt_test,
+    'Modelo': 'Árbol de Decisión'
+})
+
+df_residuales = pd.concat([df_residuales_lr, df_residuales_dt], ignore_index=True)
+
+
+chart_residuales = alt.Chart(df_residuales).mark_circle(
+    opacity=0.6,
+    size=60
+).encode(
+    x=alt.X('Predicción:Q', 
+            title='Valores Predichos',
+            scale=alt.Scale(zero=False)),
+    y=alt.Y('Residual:Q', 
+            title='Residuales (Real - Predicho)',
+            scale=alt.Scale(zero=False)),
+    color=alt.Color('Modelo:N',
+                   legend=None,
+                   scale=alt.Scale(scheme='set1')),
+    tooltip=['Predicción', 'Residual', 'Modelo']
+).properties(
+    width=300,
+    height=300
+)
+
+
+linea_cero = alt.Chart(df_residuales).mark_rule(
+    color='red',
+    strokeDash=[5, 5],
+    strokeWidth=2
+).encode(
+    y=alt.datum(0)
+)
+
+
+chart_residuales_final = (chart_residuales + linea_cero).facet(
+    column='Modelo:N'
+).properties(
+    title='Análisis de Residuales por Modelo'
+)
+
+chart_residuales_final
+```
+### GRAFICOSMUY PARECIDOS SE PUEDE VER QUE AMBOS MODELOS FUNCIONAN CORRECTAMENTE
+```{python}
+
+df_metricas = pd.DataFrame({
+    'Métrica': ['RMSE Entrenamiento', 'RMSE Prueba', 'R² Entrenamiento', 'R² Prueba'],
+    'Regresión Lineal': [rmse_lr_train, rmse_lr_test, r2_lr_train, r2_lr_test],
+    'Árbol de Decisión': [rmse_dt_train, rmse_dt_test, r2_dt_train, r2_dt_test]
+})
+
+df_metricas_long = df_metricas.melt(id_vars='Métrica', var_name='Modelo', value_name='Valor')
+
+chart_metricas = alt.Chart(df_metricas_long).mark_bar().encode(
+    alt.X('Métrica:N', title='Métrica'),
+    alt.Y('Valor:Q', title='Valor'),
+    color=alt.Color('Modelo:N', scale=alt.Scale(scheme='category10')),
+    xOffset='Modelo:N',
+    tooltip=['Métrica', 'Modelo', 'Valor']
+).properties(
+    width=600,
+    height=300,
+    title='Comparación de Métricas de Desempeño'
+)
+
+chart_metricas.display()
+
+```
+
+
+```{python}
+# Obtener nombres de features después del preprocesamiento
+dt_model = pipeline_dt.named_steps['modelo']
+preprocessor = pipeline_dt.named_steps['preprocessor']
+
+# Obtener feature names
+feature_names = []
+for name, transformer, cols in preprocessor.transformers_:
+    if name == 'nom':
+        encoder = transformer.named_steps['encodage_nom']
+        feature_names.extend(encoder.get_feature_names_out(cols))
+    elif name == 'num':
+        feature_names.extend(cols)
+
+# Importancia de variables
+importances = dt_model.feature_importances_
+feature_importance_df = pd.DataFrame({
+    'Feature': feature_names,
+    'Importance': importances
+}).sort_values('Importance', ascending=False).head(15)
+
+# Gráfico de Importancia con Altair
+chart_importance = alt.Chart(feature_importance_df).mark_bar().encode(
+    alt.X('Importance:Q', title='Importancia'),
+    alt.Y('Feature:N', sort='-x', title='Variable'),
+    color=alt.value('#2ca02c'),
+    tooltip=['Feature', 'Importance']
+).properties(
+    width=600,
+    height=400,
+    title='Top 15 Variables Más Importantes - Árbol de Decisión'
+)
+
+chart_importance.display()
+
+print("\nTop 10 Variables Más Importantes:")
+print(feature_importance_df.head(10).to_string(index=False))
+```
+
+
+# DESPUES DE HABER GENERADO LOS MODELOS NO SUPERVISADOS Y AGREGAR INFORMACION
+# AL DATAFRAME Y LA VARIABLE OBJETIVO DIDIDIRLA EN BAJA Y ALTA TOXICIDAD HEMOS
+# OBTENIDO UN MEJOR VALOR PARA RANDOM FOREST CON 0.75 MIENTRAS QUE EN LA REGRESION CON # MODELO LINEAL HA UN VALOR ACEPTABLE QUE SE LO CON UN MAE DE 0.17 LO QUE ES UN BUEN # VALOR. SE PODRIA MEJOR ITENTANDO  USAR AJUSTE DE HIPERPARAMETROS AUMENTAR
+# LA CANTIDAD DE DATOS Y PROBAR OTRAS OPCIONES DE ESCALAMIENTO DE IMPUTACION DE
+# VALORES QUIZAS LA MEDIANA,ETC PROBAR OTROS MODELOS
